@@ -3,12 +3,31 @@ const router = express.Router();
 const Meeting = require('../models/Meeting');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/authMiddleware');
+const multer = require('multer');
+const path = require('path');
 
-// Create a new meeting with conflict detection and validation
-router.post('/', authMiddleware, async (req, res) => {
-  const { title, description, link, password, emails, status, dateTime, category, bannerImage, backgroundColor } = req.body;
+// Set up multer for file uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/'); // Save to uploads folder
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname)); // Unique filename
+  },
+});
+const upload = multer({ storage });
 
-  // Validation
+// Create uploads folder if it doesn't exist
+const fs = require('fs');
+if (!fs.existsSync('uploads')) {
+  fs.mkdirSync('uploads');
+}
+
+// Create a new meeting with image upload
+router.post('/', authMiddleware, upload.single('bannerImage'), async (req, res) => {
+  const { title, description, link, password, emails, status, dateTime, category, backgroundColor, reminder } = req.body;
+  const bannerImage = req.file ? `/uploads/${req.file.filename}` : '';
+
   if (!title || typeof title !== 'string' || title.trim().length < 3) {
     return res.status(400).json({ message: 'Title is required and must be at least 3 characters' });
   }
@@ -21,11 +40,8 @@ router.post('/', authMiddleware, async (req, res) => {
   if (emails && (!Array.isArray(emails) || !emails.every(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))) {
     return res.status(400).json({ message: 'Emails must be a valid array of email addresses' });
   }
-  if (status && !['accepted', 'rejected'].includes(status)) {
-    return res.status(400).json({ message: 'Status must be "accepted" or "rejected"' });
-  }
-  if (category && !['upcoming', 'pending', 'canceled'].includes(category)) {
-    return res.status(400).json({ message: 'Category must be "upcoming", "pending", or "canceled"' });
+  if (reminder && (typeof reminder !== 'number' || reminder < 0)) {
+    return res.status(400).json({ message: 'Reminder must be a positive number (minutes)' });
   }
 
   try {
@@ -56,8 +72,9 @@ router.post('/', authMiddleware, async (req, res) => {
       status: status || 'accepted',
       category: category || 'pending',
       dateTime,
-      bannerImage: bannerImage || '',
+      bannerImage,
       backgroundColor: backgroundColor || '#ffffff',
+      reminder: reminder || null,
       user: req.user,
     });
 
@@ -70,10 +87,10 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// Get all meetings with search and pagination
+// Get all meetings
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { search, page = 1, limit = 10 } = req.query;
+    const { search, page = 1, limit = 10, category } = req.query;
     const currentDate = new Date();
 
     let query = { user: req.user };
@@ -82,6 +99,17 @@ router.get('/', authMiddleware, async (req, res) => {
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } },
       ];
+    }
+    if (category && ['upcoming', 'pending', 'canceled', 'past'].includes(category)) {
+      if (category === 'upcoming') {
+        query.dateTime = { $gt: currentDate };
+        query.category = { $ne: 'canceled' };
+      } else if (category === 'past') {
+        query.dateTime = { $lte: currentDate };
+        query.category = { $ne: 'canceled' };
+      } else {
+        query.category = category;
+      }
     }
 
     const skip = (page - 1) * limit;
@@ -92,14 +120,8 @@ router.get('/', authMiddleware, async (req, res) => {
 
     const totalMeetings = await Meeting.countDocuments(query);
 
-    const categorizedMeetings = {
-      upcoming: meetings.filter(m => m.dateTime > currentDate && m.category !== 'canceled'),
-      pending: meetings.filter(m => m.dateTime > currentDate && m.category === 'pending'),
-      canceled: meetings.filter(m => m.category === 'canceled'),
-    };
-
     res.json({
-      meetings: categorizedMeetings,
+      meetings,
       total: totalMeetings,
       page: parseInt(page),
       pages: Math.ceil(totalMeetings / limit),
@@ -109,10 +131,11 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
-// Edit a meeting
-router.put('/:id', authMiddleware, async (req, res) => {
-  const { title, description, link, password, emails, status, dateTime, category, bannerImage, backgroundColor } = req.body;
+// Edit a meeting with image upload
+router.put('/:id', authMiddleware, upload.single('bannerImage'), async (req, res) => {
+  const { title, description, link, password, emails, status, dateTime, category, backgroundColor, reminder } = req.body;
   const meetingId = req.params.id;
+  const bannerImage = req.file ? `/uploads/${req.file.filename}` : undefined;
 
   try {
     const meeting = await Meeting.findOne({ _id: meetingId, user: req.user });
@@ -130,6 +153,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (category) meeting.category = category;
     if (bannerImage !== undefined) meeting.bannerImage = bannerImage;
     if (backgroundColor !== undefined) meeting.backgroundColor = backgroundColor;
+    if (reminder !== undefined) meeting.reminder = reminder;
 
     await meeting.save();
     res.json({ message: 'Meeting updated successfully', meeting });
@@ -157,7 +181,7 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Join a meeting (public route, adds to pending)
+// Join a meeting
 router.post('/join/:id', async (req, res) => {
   const { password, email } = req.body;
   const meetingId = req.params.id;
@@ -218,6 +242,25 @@ router.put('/approve/:id', authMiddleware, async (req, res) => {
 
     await meeting.save();
     res.json({ message: `Participant ${action}ed successfully`, meeting });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Toggle ignore status
+router.put('/ignore/:id', authMiddleware, async (req, res) => {
+  const meetingId = req.params.id;
+
+  try {
+    const meeting = await Meeting.findOne({ _id: meetingId, user: req.user });
+    if (!meeting) {
+      return res.status(404).json({ message: 'Meeting not found or not authorized' });
+    }
+
+    meeting.status = meeting.status === 'ignore' ? 'accepted' : 'ignore';
+    await meeting.save();
+
+    res.json({ message: `Meeting ${meeting.status === 'ignore' ? 'ignored' : 'unignored'}`, meeting });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

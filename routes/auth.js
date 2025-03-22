@@ -1,66 +1,74 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const dotenv = require('dotenv');
 
-// Signup route
+dotenv.config();
+
+// Signup
 router.post('/signup', async (req, res) => {
   const { username, email, password } = req.body;
 
-  // Basic validation
-  if (!username || !email || !password) {
-    return res.status(400).json({ message: 'Please fill all fields' });
+  if (!username || typeof username !== 'string' || username.trim().length < 3) {
+    return res.status(400).json({ message: 'Username is required and must be at least 3 characters' });
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ message: 'Valid email is required' });
+  }
+  if (!password || password.length < 6) {
+    return res.status(400).json({ message: 'Password is required and must be at least 6 characters' });
   }
 
   try {
-    // Check if user already exists
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'Email already exists' });
     }
 
-    // Create new user
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
     const user = new User({
-      username,
-      email,
-      password,
+      username: username.trim(),
+      email: email.trim().toLowerCase(),
+      password: hashedPassword,
     });
 
     await user.save();
-    res.status(201).json({ message: 'User created successfully' });
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.status(201).json({ token });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-// Login route
+// Login
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
-  // Basic validation
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Please fill all fields' });
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ message: 'Valid email is required' });
+  }
+  if (!password || password.length < 6) {
+    return res.status(400).json({ message: 'Password is required and must be at least 6 characters' });
   }
 
   try {
-    // Check if user exists
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.trim().toLowerCase() });
     if (!user) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Check password
-    const isMatch = await user.matchPassword(password);
+    const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid email or password' });
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
 
-    // Create JWT token
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
-      expiresIn: '1h', // Token expires in 1 hour
-    });
-
-    res.json({ message: 'Login successful', token });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    res.json({ token });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
