@@ -53,7 +53,7 @@ router.post('/signup', async (req, res) => {
     const user = new User({
       username: username.trim(),
       email: emailLower,
-      password: hashedPassword,
+      password ,
     });
 
     await user.save();
@@ -88,7 +88,7 @@ router.post('/login', async (req, res) => {
 
     console.log('Input password:', password);
     console.log('Stored hashed password:', user.password);
-    const isMatch = await bcrypt.compare(password, user.password);
+    const isMatch = await user.matchPassword(password );
     console.log('Password match result:', isMatch);
 
     if (!isMatch) {
