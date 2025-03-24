@@ -1,3 +1,4 @@
+// meeting-scheduler-backend/routes/user.js
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
@@ -54,6 +55,39 @@ router.put('/settings', authMiddleware, async (req, res) => {
     await user.save();
     res.json({ message: 'Settings updated successfully', user, shouldLogout });
   } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Route to update user preferences (username and category)
+router.put('/preferences', authMiddleware, async (req, res) => {
+  const { username, category } = req.body;
+
+  // Validate input
+  if (!username || typeof username !== 'string' || username.trim().length < 3) {
+    return res.status(400).json({ message: 'Username is required and must be at least 3 characters' });
+  }
+  if (!category || typeof category !== 'string') {
+    return res.status(400).json({ message: 'Category is required' });
+  }
+
+  try {
+    // Find the user by ID (from authMiddleware)
+    const user = await User.findById(req.user);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Update user fields
+    user.username = username.trim();
+    user.category = category;
+
+    // Save the updated user
+    await user.save();
+
+    res.json({ message: 'Preferences updated successfully' });
+  } catch (error) {
+    console.log('Error updating preferences:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

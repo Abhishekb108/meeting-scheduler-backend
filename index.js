@@ -1,7 +1,8 @@
+// meeting-scheduler-backend/index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const cors = require('cors'); // Add this line to import cors
+const cors = require('cors');
 const authRoutes = require('./routes/auth');
 const meetingRoutes = require('./routes/meetings');
 const userRoutes = require('./routes/user');
@@ -15,9 +16,9 @@ dotenv.config();
 
 // Add CORS middleware to allow requests from frontend
 app.use(cors({
-  origin: 'http://localhost:3000', // Allow requests from your frontend
-  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allow these HTTP methods
-  allowedHeaders: ['Content-Type', 'Authorization'], // Allow these headers
+  origin: 'http://localhost:3000',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // Connect to MongoDB
@@ -50,7 +51,7 @@ app.get('/', (req, res) => {
 });
 
 // Start the server
-const PORT = process.env.PORT || 5000; // Fallback to 5000 if PORT not set
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });

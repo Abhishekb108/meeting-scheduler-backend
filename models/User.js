@@ -16,6 +16,8 @@ const userSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+
+  category: { type: String, default: '' },
   meetings: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Meeting',
