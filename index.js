@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
+const cors = require('cors'); // Add this line to import cors
 const authRoutes = require('./routes/auth');
 const meetingRoutes = require('./routes/meetings');
 const userRoutes = require('./routes/user');
@@ -11,6 +12,13 @@ const app = express();
 
 // Load environment variables from .env file
 dotenv.config();
+
+// Add CORS middleware to allow requests from frontend
+app.use(cors({
+  origin: 'http://localhost:3000', // Allow requests from your frontend
+  methods: ['GET', 'POST', 'PUT', 'DELETE'], // Allow these HTTP methods
+  allowedHeaders: ['Content-Type', 'Authorization'], // Allow these headers
+}));
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI, {
