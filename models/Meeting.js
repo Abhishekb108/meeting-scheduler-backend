@@ -1,3 +1,4 @@
+// meeting-scheduler-backend/models/Meeting.js
 const mongoose = require('mongoose');
 
 const meetingSchema = new mongoose.Schema({
@@ -6,9 +7,8 @@ const meetingSchema = new mongoose.Schema({
   link: { type: String, required: true },
   password: { type: String, required: false },
   emails: [{ type: String }],
-  pendingParticipants: [{ type: String }],
-  status: { type: String, enum: ['accepted', 'rejected', 'ignore'], default: 'accepted' },
-  category: { type: String, enum: ['upcoming', 'pending', 'canceled', 'past'], default: 'pending' },
+  acceptedParticipants: [{ type: String }],
+  status: { type: String, enum: ['Pending', 'Accepted', 'Rejected'], default: 'Pending' },
   dateTime: { type: Date, required: true },
   bannerImage: { type: String, required: false },
   backgroundColor: { type: String, required: false },

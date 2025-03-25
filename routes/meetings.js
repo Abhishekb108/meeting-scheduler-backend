@@ -1,3 +1,4 @@
+// meeting-scheduler-backend/routes/meetings.js
 const express = require('express');
 const router = express.Router();
 const Meeting = require('../models/Meeting');
@@ -25,7 +26,7 @@ if (!fs.existsSync('uploads')) {
 
 // Create a new meeting with image upload
 router.post('/', authMiddleware, upload.single('bannerImage'), async (req, res) => {
-  const { title, description, link, password, emails, status, dateTime, category, backgroundColor, reminder } = req.body;
+  const { title, description, link, password, emails, dateTime, backgroundColor, reminder } = req.body;
   const bannerImage = req.file ? `/uploads/${req.file.filename}` : '';
 
   if (!title || typeof title !== 'string' || title.trim().length < 3) {
@@ -69,13 +70,13 @@ router.post('/', authMiddleware, upload.single('bannerImage'), async (req, res) 
       link: link.trim(),
       password: password || '',
       emails: emails || [],
-      status: status || 'accepted',
-      category: category || 'pending',
+      status: 'Pending',
       dateTime,
       bannerImage,
       backgroundColor: backgroundColor || '#ffffff',
       reminder: reminder || null,
       user: req.user,
+      acceptedParticipants: [],
     });
 
     await meeting.save();
@@ -87,11 +88,26 @@ router.post('/', authMiddleware, upload.single('bannerImage'), async (req, res) 
   }
 });
 
+// Get a single meeting by ID
+router.get('/:id', authMiddleware, async (req, res) => {
+  const meetingId = req.params.id;
+
+  try {
+    const meeting = await Meeting.findOne({ _id: meetingId, user: req.user });
+    if (!meeting) {
+      return res.status(404).json({ message: 'Meeting not found or not authorized' });
+    }
+
+    res.json({ meeting });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Get all meetings
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { search, page = 1, limit = 10, category } = req.query;
-    const currentDate = new Date();
+    const { search, page = 1, limit = 10 } = req.query;
 
     let query = { user: req.user };
     if (search) {
@@ -99,17 +115,6 @@ router.get('/', authMiddleware, async (req, res) => {
         { title: { $regex: search, $options: 'i' } },
         { description: { $regex: search, $options: 'i' } },
       ];
-    }
-    if (category && ['upcoming', 'pending', 'canceled', 'past'].includes(category)) {
-      if (category === 'upcoming') {
-        query.dateTime = { $gt: currentDate };
-        query.category = { $ne: 'canceled' };
-      } else if (category === 'past') {
-        query.dateTime = { $lte: currentDate };
-        query.category = { $ne: 'canceled' };
-      } else {
-        query.category = category;
-      }
     }
 
     const skip = (page - 1) * limit;
@@ -133,7 +138,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
 // Edit a meeting with image upload
 router.put('/:id', authMiddleware, upload.single('bannerImage'), async (req, res) => {
-  const { title, description, link, password, emails, status, dateTime, category, backgroundColor, reminder } = req.body;
+  const { title, description, link, password, emails, status, dateTime, backgroundColor, reminder } = req.body;
   const meetingId = req.params.id;
   const bannerImage = req.file ? `/uploads/${req.file.filename}` : undefined;
 
@@ -150,7 +155,6 @@ router.put('/:id', authMiddleware, upload.single('bannerImage'), async (req, res
     if (emails) meeting.emails = emails;
     if (status) meeting.status = status;
     if (dateTime) meeting.dateTime = dateTime;
-    if (category) meeting.category = category;
     if (bannerImage !== undefined) meeting.bannerImage = bannerImage;
     if (backgroundColor !== undefined) meeting.backgroundColor = backgroundColor;
     if (reminder !== undefined) meeting.reminder = reminder;
@@ -204,8 +208,8 @@ router.post('/join/:id', async (req, res) => {
       return res.status(400).json({ message: 'You are already a participant' });
     }
 
-    if (!meeting.pendingParticipants.includes(email)) {
-      meeting.pendingParticipants.push(email);
+    if (!meeting.acceptedParticipants.includes(email)) {
+      meeting.emails.push(email);
       await meeting.save();
     }
 
@@ -230,14 +234,18 @@ router.put('/approve/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ message: 'Meeting not found or not authorized' });
     }
 
-    const participantIndex = meeting.pendingParticipants.indexOf(email);
+    const participantIndex = meeting.emails.indexOf(email);
     if (participantIndex === -1) {
-      return res.status(400).json({ message: 'Participant not found in pending list' });
+      return res.status(400).json({ message: 'Participant not found in list' });
     }
 
-    meeting.pendingParticipants.splice(participantIndex, 1);
     if (action === 'approve') {
-      meeting.emails.push(email);
+      if (!meeting.acceptedParticipants.includes(email)) {
+        meeting.acceptedParticipants.push(email);
+      }
+    } else if (action === 'reject') {
+      meeting.emails.splice(participantIndex, 1);
+      meeting.acceptedParticipants = meeting.acceptedParticipants.filter(e => e !== email);
     }
 
     await meeting.save();
@@ -257,12 +265,75 @@ router.put('/ignore/:id', authMiddleware, async (req, res) => {
       return res.status(404).json({ message: 'Meeting not found or not authorized' });
     }
 
-    meeting.status = meeting.status === 'ignore' ? 'accepted' : 'ignore';
+    meeting.status = meeting.status === 'Rejected' ? 'Pending' : 'Rejected';
     await meeting.save();
 
-    res.json({ message: `Meeting ${meeting.status === 'ignore' ? 'ignored' : 'unignored'}`, meeting });
+    res.json({ message: `Meeting ${meeting.status === 'Rejected' ? 'rejected' : 'unrejected'}`, meeting });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get all bookings for the logged-in user (meetings where their email is in the emails array)
+router.get('/bookings', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const meetings = await Meeting.find({
+      emails: { $in: [user.email] },
+    }).populate('user', 'username email');
+
+    res.json({ meetings });
+  } catch (error) {
+    console.log('Error fetching bookings:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Update the status of a meeting and track the logged-in user's acceptance
+router.put('/:id/status', authMiddleware, async (req, res) => {
+  const { status } = req.body;
+  const meetingId = req.params.id;
+
+  if (!['Accepted', 'Rejected'].includes(status)) {
+    return res.status(400).json({ message: 'Invalid status' });
+  }
+
+  try {
+    const user = await User.findById(req.user);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const meeting = await Meeting.findById(meetingId);
+    if (!meeting) {
+      return res.status(404).json({ message: 'Meeting not found' });
+    }
+
+    if (!meeting.emails.includes(user.email)) {
+      return res.status(403).json({ message: 'You are not a participant of this meeting' });
+    }
+
+    meeting.status = status;
+
+    if (status === 'Accepted') {
+      if (!meeting.acceptedParticipants.includes(user.email)) {
+        meeting.acceptedParticipants.push(user.email);
+      }
+    } else if (status === 'Rejected') {
+      meeting.acceptedParticipants = meeting.acceptedParticipants.filter(
+        email => email !== user.email
+      );
+    }
+
+    await meeting.save();
+    res.json({ message: 'Meeting status updated successfully', meeting });
+  } catch (error) {
+    console.log('Error updating meeting status:', error);
+    res.stats(500).json({ message: 'Server error', error: error.message });
   }
 });
 
